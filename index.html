@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>每日待辦與請假日曆</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+  header { padding: 10px; background: #4CAF50; color: white; display: flex; justify-content: space-between; align-items: center; }
+  #calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: #ccc; }
+  .day { background: white; min-height: 100px; padding: 5px; border: 1px solid #eee; cursor: pointer; }
+  .day:hover { background: #f1f1f1; }
+  .today { border: 2px solid red; }
+  #taskModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
+  #taskModal div { background: white; padding: 20px; width: 300px; border-radius: 5px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <button id="prevMonth">←</button>
+    <span id="monthYear"></span>
+    <button id="nextMonth">→</button>
+  </div>
+  <div>
+    <button id="loginBtn">Google 登入</button>
+    <button id="logoutBtn" style="display:none;">登出</button>
+  </div>
+</header>
+
+<div id="calendar"></div>
+
+<!-- Modal -->
+<div id="taskModal">
+  <div>
+    <h3 id="modalDate"></h3>
+    <label>待辦事項：</label><br>
+    <textarea id="todoInput" rows="3" style="width:100%;"></textarea><br><br>
+    <label>請假學生：</label><br>
+    <textarea id="leaveInput" rows="2" style="width:100%;"></textarea><br><br>
+    <button id="saveTask">儲存</button>
+    <button onclick="document.getElementById('taskModal').style.display='none'">關閉</button>
+  </div>
+</div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"></script>
+
+<script>
+  // 你的 Firebase 設定
+  const firebaseConfig = {
+    apiKey: "AIzaSyAVRmYERGhzHRb4RLL-cWhukKRu-8mH9v4",
+    authDomain: "daily-work-9609e.firebaseapp.com",
+    projectId: "daily-work-9609e",
+    storageBucket: "daily-work-9609e.appspot.com",
+    messagingSenderId: "735676985753",
+    appId: "1:735676985753:web:e311329c7475ac1364a308"
+  };
+
+  // 初始化 Firebase
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+
+  let currentUser = null;
+  let currentYear, currentMonth;
+  const calendar = document.getElementById('calendar');
+  const monthYear = document.getElementById('monthYear');
+
+  document.getElementById('prevMonth').onclick = () => changeMonth(-1);
+  document.getElementById('nextMonth').onclick = () => changeMonth(1);
+
+  document.getElementById('loginBtn').onclick = () => {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider);
+  };
+
+  document.getElementById('logoutBtn').onclick = () => auth.signOut();
+
+  auth.onAuthStateChanged(user => {
+    if (user) {
+      currentUser = user;
+      document.getElementById('loginBtn').style.display = 'none';
+      document.getElementById('logoutBtn').style.display = 'inline';
+      loadCalendar(new Date().getFullYear(), new Date().getMonth());
+    } else {
+      currentUser = null;
+      calendar.innerHTML = '';
+      document.getElementById('loginBtn').style.display = 'inline';
+      document.getElementById('logoutBtn').style.display = 'none';
+    }
+  });
+
+  function changeMonth(delta) {
+    currentMonth += delta;
+    if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+    if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+    loadCalendar(currentYear, currentMonth);
+  }
+
+  function loadCalendar(year, month) {
+    currentYear = year;
+    currentMonth = month;
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    monthYear.textContent = `${year}年 ${month + 1}月`;
+
+    calendar.innerHTML = '';
+    for (let i = 0; i < firstDay.getDay(); i++) {
+      calendar.innerHTML += `<div></div>`;
+    }
+
+    for (let date = 1; date <= lastDay.getDate(); date++) {
+      const fullDate = `${year}-${String(month+1).padStart(2,'0')}-${String(date).padStart(2,'0')}`;
+      const div = document.createElement('div');
+      div.className = 'day';
+      if (fullDate === new Date().toISOString().split('T')[0]) div.classList.add('today');
+      div.innerHTML = `<strong>${date}</strong><br><div class="todo"></div><div class="leave" style="color:red;"></div>`;
+      div.onclick = () => openTaskModal(fullDate);
+      calendar.appendChild(div);
+
+      // 即時監聽 Firestore
+      db.collection('users').doc(currentUser.uid).collection('calendar').doc(fullDate)
+        .onSnapshot(doc => {
+          if (doc.exists) {
+            const data = doc.data();
+            div.querySelector('.todo').textContent = data.todo || '';
+            div.querySelector('.leave').textContent = data.leave || '';
+          }
+        });
+    }
+  }
+
+  function openTaskModal(date) {
+    document.getElementById('modalDate').textContent = date;
+    db.collection('users').doc(currentUser.uid).collection('calendar').doc(date).get().then(doc => {
+      if (doc.exists) {
+        document.getElementById('todoInput').value = doc.data().todo || '';
+        document.getElementById('leaveInput').value = doc.data().leave || '';
+      } else {
+        document.getElementById('todoInput').value = '';
+        document.getElementById('leaveInput').value = '';
+      }
+      document.getElementById('taskModal').style.display = 'flex';
+    });
+  }
+
+  document.getElementById('saveTask').onclick = () => {
+    const date = document.getElementById('modalDate').textContent;
+    db.collection('users').doc(currentUser.uid).collection('calendar').doc(date).set({
+      todo: document.getElementById('todoInput').value,
+      leave: document.getElementById('leaveInput').value
+    }).then(() => {
+      document.getElementById('taskModal').style.display = 'none';
+    });
+  };
+</script>
+</body>
+</html>
