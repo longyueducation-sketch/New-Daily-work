@@ -57,10 +57,9 @@
     appId: "1:735676985753:web:e311329c7475ac1364a308"
   };
 
-  const app = initializeApp(firebaseConfig);
-  const auth = getAuth(app);
-  const db = getFirestore(app);
-  const provider = new GoogleAuthProvider();
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
 
   let currentUser = null;
   let currentYear, currentMonth;
