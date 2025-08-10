@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-<meta charset="UTF-8" />
+<meta charset="UTF-8">
 <title>每日待辦與請假日曆</title>
 <style>
   body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
@@ -12,6 +12,9 @@
   .today { border: 2px solid red; }
   #taskModal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
   #taskModal div { background: white; padding: 20px; width: 300px; border-radius: 5px; }
+  ul { list-style-type: none; padding: 0; margin: 0; }
+  li { display: flex; align-items: center; }
+  li.completed span { text-decoration: line-through; color: gray; }
 </style>
 </head>
 <body>
@@ -34,8 +37,11 @@
 <div id="taskModal">
   <div>
     <h3 id="modalDate"></h3>
-    <label>待辦事項：</label><br>
-    <textarea id="todoInput" rows="3" style="width:100%;"></textarea><br><br>
+    <label>新增待辦事項：</label><br>
+    <input id="newTodoInput" type="text" style="width:80%;">
+    <button id="addTodoBtn">新增</button>
+    <ul id="todoList"></ul>
+    <br>
     <label>請假學生：</label><br>
     <textarea id="leaveInput" rows="2" style="width:100%;"></textarea><br><br>
     <button id="saveTask">儲存</button>
@@ -43,11 +49,13 @@
   </div>
 </div>
 
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-  import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-  import { getFirestore, doc, collection, onSnapshot, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"></script>
 
+<script>
+  // Firebase 設定
   const firebaseConfig = {
     apiKey: "AIzaSyAVRmYERGhzHRb4RLL-cWhukKRu-8mH9v4",
     authDomain: "daily-work-9609e.firebaseapp.com",
@@ -57,10 +65,9 @@
     appId: "1:735676985753:web:e311329c7475ac1364a308"
   };
 
-  const app = initializeApp(firebaseConfig);
-  const auth = getAuth(app);
-  const db = getFirestore(app);
-  const provider = new GoogleAuthProvider();
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
 
   let currentUser = null;
   let currentYear, currentMonth;
@@ -71,30 +78,17 @@
   document.getElementById('nextMonth').onclick = () => changeMonth(1);
 
   document.getElementById('loginBtn').onclick = () => {
-    signInWithPopup(auth, provider)
-      .then(result => {
-        currentUser = result.user;
-        updateUIOnLogin();
-        loadCalendar(new Date().getFullYear(), new Date().getMonth());
-      })
-      .catch(error => {
-        alert("登入失敗：" + error.message);
-      });
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider);
   };
 
-  document.getElementById('logoutBtn').onclick = () => {
-    signOut(auth).then(() => {
-      currentUser = null;
-      calendar.innerHTML = '';
-      document.getElementById('loginBtn').style.display = 'inline';
-      document.getElementById('logoutBtn').style.display = 'none';
-    });
-  };
+  document.getElementById('logoutBtn').onclick = () => auth.signOut();
 
-  onAuthStateChanged(auth, user => {
+  auth.onAuthStateChanged(user => {
     if (user) {
       currentUser = user;
-      updateUIOnLogin();
+      document.getElementById('loginBtn').style.display = 'none';
+      document.getElementById('logoutBtn').style.display = 'inline';
       loadCalendar(new Date().getFullYear(), new Date().getMonth());
     } else {
       currentUser = null;
@@ -104,21 +98,10 @@
     }
   });
 
-  function updateUIOnLogin() {
-    document.getElementById('loginBtn').style.display = 'none';
-    document.getElementById('logoutBtn').style.display = 'inline';
-  }
-
   function changeMonth(delta) {
     currentMonth += delta;
-    if (currentMonth < 0) {
-      currentMonth = 11;
-      currentYear--;
-    }
-    if (currentMonth > 11) {
-      currentMonth = 0;
-      currentYear++;
-    }
+    if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+    if (currentMonth > 11) { currentMonth = 0; currentYear++; }
     loadCalendar(currentYear, currentMonth);
   }
 
@@ -135,7 +118,7 @@
     }
 
     for (let date = 1; date <= lastDay.getDate(); date++) {
-      const fullDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(date).padStart(2, '0')}`;
+      const fullDate = `${year}-${String(month+1).padStart(2,'0')}-${String(date).padStart(2,'0')}`;
       const div = document.createElement('div');
       div.className = 'day';
       if (fullDate === new Date().toISOString().split('T')[0]) div.classList.add('today');
@@ -143,49 +126,82 @@
       div.onclick = () => openTaskModal(fullDate);
       calendar.appendChild(div);
 
-      if (currentUser) {
-        const docRef = doc(collection(doc(db, 'users', currentUser.uid), 'calendar'), fullDate);
-        onSnapshot(docRef, docSnap => {
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            div.querySelector('.todo').textContent = data.todo || '';
+      // 即時監聽 Firestore
+      db.collection('users').doc(currentUser.uid).collection('calendar').doc(fullDate)
+        .onSnapshot(doc => {
+          if (doc.exists) {
+            const data = doc.data();
+            const todoDiv = div.querySelector('.todo');
+            todoDiv.innerHTML = "";
+            if (data.todos) {
+              const ul = document.createElement('ul');
+              data.todos.forEach(todo => {
+                const li = document.createElement('li');
+                li.className = todo.completed ? 'completed' : '';
+                li.innerHTML = `<span>${todo.text}</span>`;
+                ul.appendChild(li);
+              });
+              todoDiv.appendChild(ul);
+            }
             div.querySelector('.leave').textContent = data.leave || '';
-          } else {
-            div.querySelector('.todo').textContent = '';
-            div.querySelector('.leave').textContent = '';
           }
         });
-      }
     }
   }
 
   function openTaskModal(date) {
     document.getElementById('modalDate').textContent = date;
-    if (!currentUser) return alert("請先登入");
-    const docRef = doc(collection(doc(db, 'users', currentUser.uid), 'calendar'), date);
-    getDoc(docRef).then(docSnap => {
-      if (docSnap.exists()) {
-        document.getElementById('todoInput').value = docSnap.data().todo || '';
-        document.getElementById('leaveInput').value = docSnap.data().leave || '';
+    const todoList = document.getElementById('todoList');
+    todoList.innerHTML = '';
+    db.collection('users').doc(currentUser.uid).collection('calendar').doc(date).get().then(doc => {
+      if (doc.exists) {
+        const data = doc.data();
+        (data.todos || []).forEach(todo => addTodoItem(todo.text, todo.completed));
+        document.getElementById('leaveInput').value = data.leave || '';
       } else {
-        document.getElementById('todoInput').value = '';
         document.getElementById('leaveInput').value = '';
       }
       document.getElementById('taskModal').style.display = 'flex';
     });
   }
 
+  function addTodoItem(text, completed = false) {
+    const li = document.createElement('li');
+    if (completed) li.classList.add('completed');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = completed;
+    checkbox.onchange = () => {
+      li.classList.toggle('completed');
+    };
+    const span = document.createElement('span');
+    span.textContent = text;
+    li.appendChild(checkbox);
+    li.appendChild(span);
+    document.getElementById('todoList').appendChild(li);
+  }
+
+  document.getElementById('addTodoBtn').onclick = () => {
+    const input = document.getElementById('newTodoInput');
+    if (input.value.trim()) {
+      addTodoItem(input.value.trim());
+      input.value = '';
+    }
+  };
+
   document.getElementById('saveTask').onclick = () => {
-    if (!currentUser) return alert("請先登入");
     const date = document.getElementById('modalDate').textContent;
-    const todo = document.getElementById('todoInput').value;
-    const leave = document.getElementById('leaveInput').value;
-    const docRef = doc(collection(doc(db, 'users', currentUser.uid), 'calendar'), date);
-    setDoc(docRef, { todo, leave }).then(() => {
+    const todos = [];
+    document.querySelectorAll('#todoList li').forEach(li => {
+      todos.push({ text: li.querySelector('span').textContent, completed: li.classList.contains('completed') });
+    });
+    db.collection('users').doc(currentUser.uid).collection('calendar').doc(date).set({
+      todos: todos,
+      leave: document.getElementById('leaveInput').value
+    }).then(() => {
       document.getElementById('taskModal').style.display = 'none';
     });
   };
 </script>
-
 </body>
 </html>
